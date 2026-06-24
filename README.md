@@ -8,36 +8,46 @@ A drop-in floating widget for collecting annotated UI feedback on web prototypes
 - Full-page screenshots with annotations
 - Comment threads with replies
 - Open / Resolved filter
-- Real-time sync across tabs
-- Firebase **or** Supabase backend
-- S3 screenshot storage via a backend proxy
+- Three fully independent backend options
 
 ---
 
 ## Installation
 
 ```bash
-npm install @vishmindbowser/ui-feedback-plugin
+npm install @mindbowser_inc/ui-feedback-plugin
 ```
 
 ---
 
-## Quick start
+## Backends
 
-### With Firebase
+Choose **one** backend. They are fully independent — no mixing required.
+
+| Backend | Database | Screenshot storage | Real-time |
+|---|---|---|---|
+| **Firebase** | Firestore | Firebase Storage | Yes (onSnapshot) |
+| **Supabase** | Postgres | Supabase Storage | Yes (Realtime) |
+| **AWS S3** | JSON files in S3 | S3 | Polling (5s default) |
+
+---
+
+## Firebase
+
+Firestore stores comments and replies. Firebase Storage holds screenshots.
 
 ```js
-import { initFeedbackPlugin } from '@vishmindbowser/ui-feedback-plugin'
+import { initFeedbackPlugin } from '@mindbowser_inc/ui-feedback-plugin'
 
 initFeedbackPlugin({
-  database: {
+  backend: {
     provider: 'firebase',
-    apiKey: process.env.FIREBASE_API_KEY,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    apiKey:            process.env.FIREBASE_API_KEY,
+    authDomain:        process.env.FIREBASE_AUTH_DOMAIN,
+    projectId:         process.env.FIREBASE_PROJECT_ID,
+    storageBucket:     process.env.FIREBASE_STORAGE_BUCKET,
     messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.FIREBASE_APP_ID,
+    appId:             process.env.FIREBASE_APP_ID,
   },
   projectKey: 'my-project',
 })
@@ -45,24 +55,28 @@ initFeedbackPlugin({
 
 > The Firebase API key is a **public identifier**, not a secret. Secure your data with [Firebase Security Rules](https://firebase.google.com/docs/rules).
 
-### With Supabase
+---
+
+## Supabase
+
+Postgres stores comments and replies. Supabase Storage holds screenshots.
 
 ```js
-import { initFeedbackPlugin } from '@vishmindbowser/ui-feedback-plugin'
+import { initFeedbackPlugin } from '@mindbowser_inc/ui-feedback-plugin'
 
 initFeedbackPlugin({
-  database: {
+  backend: {
     provider: 'supabase',
-    url: process.env.SUPABASE_URL,
+    url:     process.env.SUPABASE_URL,
     anonKey: process.env.SUPABASE_ANON_KEY,
   },
   projectKey: 'my-project',
 })
 ```
 
-> The Supabase `anonKey` is a **public key by design**. Secure your data with [Row Level Security (RLS)](https://supabase.com/docs/guides/auth/row-level-security) policies.
+> The Supabase `anonKey` is a **public key by design**. Secure your data with [Row Level Security (RLS)](https://supabase.com/docs/guides/auth/row-level-security).
 
-**Supabase setup** — run this SQL in your Supabase SQL editor:
+**Required SQL** — run this in your Supabase SQL editor once:
 
 ```sql
 create table if not exists ufp_comments (
@@ -76,7 +90,6 @@ create table if not exists ufp_comments (
   resolved boolean default false,
   created_at bigint not null
 );
-
 create table if not exists ufp_replies (
   id uuid primary key default gen_random_uuid(),
   comment_id uuid not null references ufp_comments(id) on delete cascade,
@@ -84,19 +97,16 @@ create table if not exists ufp_replies (
   text text not null,
   created_at bigint not null
 );
-
 alter table ufp_comments enable row level security;
 alter table ufp_replies enable row level security;
 create policy "ufp_comments_all" on ufp_comments for all using (true) with check (true);
 create policy "ufp_replies_all" on ufp_replies for all using (true) with check (true);
-
 grant select, insert, update, delete on ufp_comments to anon;
 grant select, insert, update, delete on ufp_replies to anon;
-
 alter publication supabase_realtime add table ufp_comments;
 ```
 
-Then create a **public** Storage bucket named `ufp-screenshots` and add these policies:
+Then in **Storage**, create a public bucket named `ufp-screenshots` and add:
 
 ```sql
 create policy "ufp_storage_insert" on storage.objects for insert to anon with check (bucket_id = 'ufp-screenshots');
@@ -106,27 +116,39 @@ create policy "ufp_storage_update" on storage.objects for update to anon using (
 
 ---
 
-## S3 screenshot storage
+## AWS S3
 
-Store screenshots in S3 while keeping your database on Firebase or Supabase. **AWS credentials must never appear in frontend code** — provide a backend proxy endpoint instead.
+Everything — comments, replies, and screenshots — lives in S3 as JSON/image files. No Firebase or Supabase needed.
+
+**AWS credentials must never appear in frontend code.** This adapter calls your own backend API, which holds the credentials and talks to S3.
 
 ```js
+import { initFeedbackPlugin } from '@mindbowser_inc/ui-feedback-plugin'
+
 initFeedbackPlugin({
-  database: {
-    provider: 'supabase',
-    url: process.env.SUPABASE_URL,
-    anonKey: process.env.SUPABASE_ANON_KEY,
-  },
-  screenshots: {
-    provider: 's3',
-    uploadEndpoint: 'https://your-api.com/upload-screenshot',
-    headers: { Authorization: 'Bearer your-internal-token' },
+  backend: {
+    provider:     's3',
+    apiUrl:       'https://your-api.com/ufp',   // your backend base URL
+    headers:      { Authorization: 'Bearer your-internal-token' },
+    pollInterval: 5000,  // ms between comment refreshes (default: 5000)
   },
   projectKey: 'my-project',
 })
 ```
 
-Your endpoint receives `POST { commentId: string, imageData: string }` (base64) and must return `{ url: string }`. See the [minimal Node/Express example](src/adapters/s3.ts).
+**Your backend must expose these endpoints:**
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/comments?pageUrl=...&projectKey=...` | — | `FeedbackComment[]` |
+| POST | `/comments` | `FeedbackComment` (no id) | `{ id: string }` |
+| PUT | `/comments/:id` | `Partial<FeedbackComment>` | `200` |
+| DELETE | `/comments/:id` | — | `200` |
+| GET | `/replies?commentId=...` | — | `Reply[]` |
+| POST | `/replies` | `Reply` (no id) | `{ id: string }` |
+| POST | `/screenshots` | `{ commentId, imageData }` (base64) | `{ url: string }` |
+
+A full Node.js/Express reference server is included as comments inside [`src/adapters/s3.ts`](src/adapters/s3.ts).
 
 ---
 
@@ -134,23 +156,22 @@ Your endpoint receives `POST { commentId: string, imageData: string }` (base64) 
 
 ```ts
 initFeedbackPlugin({
-  database: FirebaseProviderConfig | SupabaseProviderConfig   // required
-  screenshots?: 'firebase' | 'supabase' | S3ScreenshotConfig // optional, defaults to same as database
-  projectKey?: string        // namespace comments per project (default: 'default')
-  position?: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'  // default: 'bottom-right'
-  theme?: { primaryColor?: string }  // default: '#6366f1'
+  backend:    FirebaseProviderConfig | SupabaseProviderConfig | S3ProviderConfig  // required
+  projectKey?: string          // namespace comments per project (default: 'default')
+  position?:  'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
+  theme?:     { primaryColor?: string }   // default: '#6366f1'
 })
 ```
 
 ---
 
-## Usage in plain HTML (UMD)
+## Plain HTML (UMD / CDN)
 
 ```html
-<script src="https://unpkg.com/@vishmindbowser/ui-feedback-plugin/dist/ui-feedback-plugin.umd.js"></script>
+<script src="https://unpkg.com/@mindbowser_inc/ui-feedback-plugin/dist/ui-feedback-plugin.umd.js"></script>
 <script>
   UIFeedbackPlugin.initFeedbackPlugin({
-    database: { provider: 'supabase', url: '...', anonKey: '...' },
+    backend: { provider: 'supabase', url: '...', anonKey: '...' },
     projectKey: 'my-project',
   })
 </script>

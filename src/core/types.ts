@@ -37,7 +37,7 @@ export interface FeedbackComment {
 
 // ── Adapter interfaces ────────────────────────────────────────────────────────
 
-/** Handles comments and replies (database layer). */
+/** Handles comments and replies. */
 export interface DatabaseAdapter {
   addComment(comment: Omit<FeedbackComment, 'id'>): Promise<string>
   getComments(pageUrl: string, projectKey: string): Promise<FeedbackComment[]>
@@ -52,75 +52,71 @@ export interface DatabaseAdapter {
   ): () => void
 }
 
-/** Handles screenshot uploads (storage layer). */
+/** Handles screenshot uploads. */
 export interface ScreenshotAdapter {
   uploadScreenshot(commentId: string, dataUrl: string): Promise<string>
 }
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── Backend provider configs ──────────────────────────────────────────────────
 
+/**
+ * Firebase backend — Firestore for comments/replies, Firebase Storage for screenshots.
+ * The API key is a public identifier, not a secret. Secure data with Firebase Security Rules.
+ */
 export interface FirebaseProviderConfig {
   provider: 'firebase'
-  /**
-   * Firebase API key. This is a public identifier — not a secret.
-   * Secure your data with Firebase Security Rules.
-   * Store in an environment variable (VITE_FIREBASE_API_KEY, REACT_APP_FIREBASE_API_KEY, etc.)
-   */
   apiKey: string
   authDomain: string
   projectId: string
-  /** Required when using Firebase Storage for screenshots. */
+  /** Required for screenshot storage. */
   storageBucket?: string
   messagingSenderId?: string
   appId?: string
 }
 
+/**
+ * Supabase backend — Postgres for comments/replies, Supabase Storage for screenshots.
+ * The anonKey is a public key by design. Secure data with Row Level Security (RLS) policies.
+ * See src/adapters/supabase.ts for the required SQL setup.
+ */
 export interface SupabaseProviderConfig {
   provider: 'supabase'
   url: string
-  /**
-   * Supabase anon key. This is a public key — not a secret.
-   * Secure your data with Supabase Row Level Security (RLS) policies.
-   * Store in an environment variable.
-   */
   anonKey: string
 }
 
 /**
- * S3 screenshot storage via a backend proxy endpoint.
- * NEVER pass AWS credentials to the frontend — your backend holds those.
- * Your endpoint receives { commentId, imageData } and returns { url }.
+ * AWS S3 backend — all data (comments, replies, screenshots) stored in S3.
+ * No Firebase or Supabase needed.
+ *
+ * AWS credentials MUST stay on your server — this adapter calls your backend API,
+ * which in turn reads/writes S3. See src/adapters/s3.ts for the required API contract
+ * and a full Node.js/Express reference implementation.
  */
-export interface S3ScreenshotConfig {
+export interface S3ProviderConfig {
   provider: 's3'
-  /** Your backend endpoint that accepts the screenshot and returns { url: string } */
-  uploadEndpoint: string
-  /** Optional headers (e.g. an authorization token for your own backend) */
+  /** Base URL of your backend API (e.g. https://your-api.com/ufp). No trailing slash. */
+  apiUrl: string
+  /** Optional headers sent with every request (e.g. { Authorization: 'Bearer token' }). */
   headers?: Record<string, string>
+  /**
+   * How often (ms) to poll for new comments. S3 has no real-time push.
+   * Default: 5000 (5 seconds).
+   */
+  pollInterval?: number
 }
 
-export type DatabaseConfig = FirebaseProviderConfig | SupabaseProviderConfig
-
-/**
- * Controls where screenshots are stored.
- * - `'firebase'` / `'supabase'`: reuse the same provider configured in `database`
- * - `'s3'`: forward screenshots to your own backend proxy (AWS credentials stay on your server)
- */
-export type ScreenshotConfig =
-  | { provider: 'firebase' }
-  | { provider: 'supabase' }
-  | S3ScreenshotConfig
+export type BackendConfig = FirebaseProviderConfig | SupabaseProviderConfig | S3ProviderConfig
 
 export interface PluginConfig {
-  /** Database provider for storing comments and replies. */
-  database: DatabaseConfig
   /**
-   * Screenshot storage provider.
-   * Defaults to the same provider as `database`.
-   * Use `s3` to keep screenshots off Firebase/Supabase.
+   * Storage backend. Pick one:
+   * - `firebase`  — Firestore + Firebase Storage
+   * - `supabase`  — Postgres + Supabase Storage
+   * - `s3`        — Everything in AWS S3 via your backend API (no Firebase/Supabase needed)
    */
-  screenshots?: ScreenshotConfig
-  /** Namespace comments by project. Use this when multiple prototypes share a backend. */
+  backend: BackendConfig
+  /** Namespace comments by project (default: 'default'). */
   projectKey?: string
   position?: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
   theme?: { primaryColor?: string }

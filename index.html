@@ -63,13 +63,16 @@
 
     // Credentials are loaded from .env.local (never committed to git).
     // Copy .env.local.example → .env.local and fill in your values.
+    // Set VITE_PROVIDER to 'supabase', 'firebase', or 's3' to switch backends.
 
-    // ── Supabase ──────────────────────────────────────────────────────────────
-    if (import.meta.env.VITE_SUPABASE_URL) {
+    const provider = import.meta.env.VITE_PROVIDER ?? 'supabase'
+
+    // ── Supabase — Postgres + Supabase Storage ────────────────────────────────
+    if (provider === 'supabase') {
       initFeedbackPlugin({
-        database: {
+        backend: {
           provider: 'supabase',
-          url: import.meta.env.VITE_SUPABASE_URL,
+          url:     import.meta.env.VITE_SUPABASE_URL,
           anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         projectKey: import.meta.env.VITE_PROJECT_KEY ?? 'demo-v1',
@@ -78,11 +81,11 @@
       })
     }
 
-    // ── Firebase ──────────────────────────────────────────────────────────────
-    else if (import.meta.env.VITE_FIREBASE_API_KEY) {
+    // ── Firebase — Firestore + Firebase Storage ───────────────────────────────
+    else if (provider === 'firebase') {
       initFeedbackPlugin({
-        database: {
-          provider: 'firebase',
+        backend: {
+          provider:          'firebase',
           apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
           authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
           projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -96,15 +99,22 @@
       })
     }
 
-    // ── Firebase + S3 screenshots ─────────────────────────────────────────────
-    // Uncomment to test S3 screenshot storage. AWS credentials stay on your server.
-    // See src/adapters/s3.ts for the required server-side endpoint.
-    //
-    // initFeedbackPlugin({
-    //   database:    { provider: 'firebase', apiKey: import.meta.env.VITE_FIREBASE_API_KEY, ... },
-    //   screenshots: { provider: 's3', uploadEndpoint: import.meta.env.VITE_S3_UPLOAD_ENDPOINT },
-    //   projectKey: 'demo-v1',
-    // })
+    // ── AWS S3 — everything in S3 via your backend API ────────────────────────
+    // AWS credentials stay on your server. See src/adapters/s3.ts for the
+    // required API contract and a full Node.js/Express reference server.
+    else if (provider === 's3') {
+      initFeedbackPlugin({
+        backend: {
+          provider: 's3',
+          apiUrl:   import.meta.env.VITE_S3_API_URL,    // e.g. http://localhost:3001/ufp
+          headers:  { Authorization: `Bearer ${import.meta.env.VITE_S3_API_TOKEN ?? ''}` },
+          pollInterval: 5000,
+        },
+        projectKey: import.meta.env.VITE_PROJECT_KEY ?? 'demo-v1',
+        position: 'bottom-right',
+        theme: { primaryColor: '#6366f1' },
+      })
+    }
   </script>
 </body>
 

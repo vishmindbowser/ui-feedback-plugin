@@ -15,51 +15,31 @@ import { capturePageScreenshot } from './screenshot/capture'
 
 const TAG = 'ui-feedback-plugin'
 
-async function createDatabaseAdapter(config: PluginConfig): Promise<DatabaseAdapter> {
-  const db = config.database
-  if (db.provider === 'firebase') {
+async function createAdapters(config: PluginConfig): Promise<{
+  db: DatabaseAdapter
+  screenshot: ScreenshotAdapter
+}> {
+  const { backend } = config
+
+  if (backend.provider === 'firebase') {
     const { FirebaseAdapter } = await import('./adapters/firebase')
-    return new FirebaseAdapter(db)
+    const adapter = new FirebaseAdapter(backend)
+    return { db: adapter, screenshot: adapter }
   }
-  if (db.provider === 'supabase') {
+
+  if (backend.provider === 'supabase') {
     const { SupabaseAdapter } = await import('./adapters/supabase')
-    return new SupabaseAdapter(db.url, db.anonKey)
-  }
-  throw new Error('[ui-feedback-plugin] Unknown database provider')
-}
-
-async function createScreenshotAdapter(
-  config: PluginConfig,
-  dbAdapter: DatabaseAdapter
-): Promise<ScreenshotAdapter> {
-  const sc = config.screenshots
-
-  // No screenshots config — reuse db adapter (Firebase + Supabase both support screenshots)
-  if (!sc) {
-    return dbAdapter as unknown as ScreenshotAdapter
+    const adapter = new SupabaseAdapter(backend.url, backend.anonKey)
+    return { db: adapter, screenshot: adapter }
   }
 
-  if (sc.provider === 's3') {
-    const { S3ScreenshotAdapter } = await import('./adapters/s3')
-    return new S3ScreenshotAdapter(sc.uploadEndpoint, sc.headers)
+  if (backend.provider === 's3') {
+    const { S3Adapter } = await import('./adapters/s3')
+    const adapter = new S3Adapter(backend.apiUrl, backend.headers, backend.pollInterval)
+    return { db: adapter, screenshot: adapter }
   }
 
-  // 'firebase' / 'supabase' — reuse same provider as database
-  if (sc.provider === 'firebase') {
-    if (config.database.provider !== 'firebase') {
-      throw new Error('[ui-feedback-plugin] screenshots.provider "firebase" requires database.provider "firebase"')
-    }
-    return dbAdapter as unknown as ScreenshotAdapter
-  }
-
-  if (sc.provider === 'supabase') {
-    if (config.database.provider !== 'supabase') {
-      throw new Error('[ui-feedback-plugin] screenshots.provider "supabase" requires database.provider "supabase"')
-    }
-    return dbAdapter as unknown as ScreenshotAdapter
-  }
-
-  throw new Error('[ui-feedback-plugin] Unknown screenshot storage provider')
+  throw new Error('[ui-feedback-plugin] Unknown backend provider')
 }
 
 export function initFeedbackPlugin(config: PluginConfig): () => void {
@@ -68,16 +48,16 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
     return () => {}
   }
 
-  const primaryColor  = config.theme?.primaryColor ?? '#6366f1'
-  const projectKey    = config.projectKey ?? 'default'
-  const position      = config.position ?? 'bottom-right'
+  const primaryColor = config.theme?.primaryColor ?? '#6366f1'
+  const projectKey   = config.projectKey ?? 'default'
+  const position     = config.position ?? 'bottom-right'
 
   setState({ config })
 
   class FeedbackPlugin extends HTMLElement {
     private shadow!: ShadowRoot
-    private dbAdapter!: DatabaseAdapter
-    private screenshotAdapter!: ScreenshotAdapter
+    private db!: DatabaseAdapter
+    private screenshot!: ScreenshotAdapter
     private unsubscribe: (() => void) | null = null
 
     constructor() {
@@ -91,10 +71,11 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
       this.shadow.appendChild(style)
 
       try {
-        this.dbAdapter = await createDatabaseAdapter(config)
-        this.screenshotAdapter = await createScreenshotAdapter(config, this.dbAdapter)
+        const adapters = await createAdapters(config)
+        this.db = adapters.db
+        this.screenshot = adapters.screenshot
       } catch (err) {
-        console.error('[ui-feedback-plugin] Failed to initialize adapters:', err)
+        console.error('[ui-feedback-plugin] Failed to initialise backend:', err)
         return
       }
 
@@ -108,7 +89,7 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
     private mount() {
       const pageUrl = normalizeUrl(window.location.href)
 
-      createCommentsPanel(this.shadow, this.dbAdapter, () => this.startAnnotation())
+      createCommentsPanel(this.shadow, this.db, () => this.startAnnotation())
 
       createFloatingTrigger(
         this.shadow,
@@ -117,7 +98,7 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
         () => setState({ panelOpen: !getState().panelOpen })
       )
 
-      this.unsubscribe = this.dbAdapter.subscribeToComments(pageUrl, projectKey, (comments) => {
+      this.unsubscribe = this.db.subscribeToComments(pageUrl, projectKey, (comments) => {
         setState({ comments })
       })
     }
@@ -184,9 +165,9 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
         createdAt: Date.now(),
       }
 
-      const commentId = await this.dbAdapter.addComment(placeholder)
-      const screenshotUrl = await this.screenshotAdapter.uploadScreenshot(commentId, screenshotDataUrl)
-      await this.dbAdapter.updateComment(commentId, { screenshotUrl })
+      const commentId = await this.db.addComment(placeholder)
+      const screenshotUrl = await this.screenshot.uploadScreenshot(commentId, screenshotDataUrl)
+      await this.db.updateComment(commentId, { screenshotUrl })
     }
 
     private showToast(message: string, type: 'info' | 'success' | 'error') {

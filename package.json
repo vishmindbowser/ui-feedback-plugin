@@ -1,6 +1,6 @@
 {
-  "name": "@vishmindbowser/ui-feedback-plugin",
-  "version": "0.1.0",
+  "name": "@mindbowser_inc/ui-feedback-plugin",
+  "version": "0.2.0",
   "description": "A floating widget for collecting annotated UI feedback on web prototypes — Figma-style comments, screenshots, reply threads, Firebase/Supabase/S3 support",
   "main": "dist/ui-feedback-plugin.umd.js",
   "module": "dist/ui-feedback-plugin.es.js",
