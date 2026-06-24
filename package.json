@@ -1,0 +1,44 @@
+{
+  "name": "ui-feedback-plugin",
+  "version": "0.1.0",
+  "description": "A floating UI feedback widget for collecting annotated comments on web prototypes",
+  "main": "dist/ui-feedback-plugin.umd.js",
+  "module": "dist/ui-feedback-plugin.es.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/ui-feedback-plugin.es.js",
+      "require": "./dist/ui-feedback-plugin.umd.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "feedback",
+    "annotation",
+    "ui",
+    "prototype",
+    "comments"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "firebase": "^10.12.0",
+    "html2canvas": "^1.4.1"
+  },
+  "optionalDependencies": {
+    "@supabase/supabase-js": "^2.108.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vite-plugin-dts": "^3.9.1"
+  }
+}

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UI Feedback Plugin — Dev Demo</title>
+  <style>
+    body {
+      font-family: -apple-system, sans-serif;
+      margin: 0;
+      padding: 40px;
+      background: #f9fafb;
+    }
+
+    h1 {
+      color: #111;
+    }
+
+    p {
+      color: #555;
+      line-height: 1.7;
+      max-width: 600px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 24px 0;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      max-width: 500px;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      background: #6366f1;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Demo Page</h1>
+  <p>This is a sample prototype page. Click the <strong>Feedback</strong> button in the corner to annotate and leave
+    comments.</p>
+  <div class="card">
+    <h2>Feature A</h2>
+    <p>Some UI content that a reviewer might want to comment on.</p>
+    <button class="btn">Action</button>
+  </div>
+  <div class="card">
+    <h2>Feature B</h2>
+    <p>Another section with more content. Draw a rectangle around something, then add a comment.</p>
+  </div>
+
+  <script type="module">
+    import { initFeedbackPlugin } from '/src/index.ts'
+
+    // Credentials are loaded from .env.local (never committed to git).
+    // Copy .env.local.example → .env.local and fill in your values.
+
+    // ── Supabase ──────────────────────────────────────────────────────────────
+    if (import.meta.env.VITE_SUPABASE_URL) {
+      initFeedbackPlugin({
+        database: {
+          provider: 'supabase',
+          url: import.meta.env.VITE_SUPABASE_URL,
+          anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        projectKey: import.meta.env.VITE_PROJECT_KEY ?? 'demo-v1',
+        position: 'bottom-right',
+        theme: { primaryColor: '#6366f1' },
+      })
+    }
+
+    // ── Firebase ──────────────────────────────────────────────────────────────
+    else if (import.meta.env.VITE_FIREBASE_API_KEY) {
+      initFeedbackPlugin({
+        database: {
+          provider: 'firebase',
+          apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+          authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+          projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+          storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+          messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+          appId:             import.meta.env.VITE_FIREBASE_APP_ID,
+        },
+        projectKey: import.meta.env.VITE_PROJECT_KEY ?? 'demo-v1',
+        position: 'bottom-right',
+        theme: { primaryColor: '#6366f1' },
+      })
+    }
+
+    // ── Firebase + S3 screenshots ─────────────────────────────────────────────
+    // Uncomment to test S3 screenshot storage. AWS credentials stay on your server.
+    // See src/adapters/s3.ts for the required server-side endpoint.
+    //
+    // initFeedbackPlugin({
+    //   database:    { provider: 'firebase', apiKey: import.meta.env.VITE_FIREBASE_API_KEY, ... },
+    //   screenshots: { provider: 's3', uploadEndpoint: import.meta.env.VITE_S3_UPLOAD_ENDPOINT },
+    //   projectKey: 'demo-v1',
+    // })
+  </script>
+</body>
+
+</html>
