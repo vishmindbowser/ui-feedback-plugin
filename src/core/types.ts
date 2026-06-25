@@ -86,19 +86,23 @@ export interface SupabaseProviderConfig {
 }
 
 /**
- * AWS S3 backend — all data (comments, replies, screenshots) stored in S3.
+ * AWS backend — all data (comments, replies, screenshots) stored directly in S3.
  * No Firebase or Supabase needed.
  *
- * AWS credentials MUST stay on your server — this adapter calls your backend API,
- * which in turn reads/writes S3. See src/adapters/s3.ts for the required API contract
- * and a full Node.js/Express reference implementation.
+ * The browser obtains temporary, rotating AWS credentials from a Cognito Identity Pool.
+ * No long-lived keys ever touch the browser. See src/adapters/aws.ts for AWS setup steps.
  */
-export interface S3ProviderConfig {
-  provider: 's3'
-  /** Base URL of your backend API (e.g. https://your-api.com/ufp). No trailing slash. */
-  apiUrl: string
-  /** Optional headers sent with every request (e.g. { Authorization: 'Bearer token' }). */
-  headers?: Record<string, string>
+export interface AWSProviderConfig {
+  provider: 'aws'
+  /** AWS region (e.g. 'us-east-1'). */
+  region: string
+  /** S3 bucket name. */
+  bucket: string
+  /**
+   * Cognito Identity Pool ID (e.g. 'us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx').
+   * Used to obtain temporary AWS credentials in the browser.
+   */
+  identityPoolId: string
   /**
    * How often (ms) to poll for new comments. S3 has no real-time push.
    * Default: 5000 (5 seconds).
@@ -106,14 +110,14 @@ export interface S3ProviderConfig {
   pollInterval?: number
 }
 
-export type BackendConfig = FirebaseProviderConfig | SupabaseProviderConfig | S3ProviderConfig
+export type BackendConfig = FirebaseProviderConfig | SupabaseProviderConfig | AWSProviderConfig
 
 export interface PluginConfig {
   /**
    * Storage backend. Pick one:
    * - `firebase`  — Firestore + Firebase Storage
    * - `supabase`  — Postgres + Supabase Storage
-   * - `s3`        — Everything in AWS S3 via your backend API (no Firebase/Supabase needed)
+   * - `aws`       — Everything in AWS S3 via Cognito Identity Pool (no backend needed)
    */
   backend: BackendConfig
   /** Namespace comments by project (default: 'default'). */

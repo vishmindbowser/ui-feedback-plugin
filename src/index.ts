@@ -33,9 +33,9 @@ async function createAdapters(config: PluginConfig): Promise<{
     return { db: adapter, screenshot: adapter }
   }
 
-  if (backend.provider === 's3') {
-    const { S3Adapter } = await import('./adapters/s3')
-    const adapter = new S3Adapter(backend.apiUrl, backend.headers, backend.pollInterval)
+  if (backend.provider === 'aws') {
+    const { AWSAdapter } = await import('./adapters/aws')
+    const adapter = new AWSAdapter(backend)
     return { db: adapter, screenshot: adapter }
   }
 

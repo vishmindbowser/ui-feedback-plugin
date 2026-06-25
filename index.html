@@ -99,16 +99,18 @@
       })
     }
 
-    // ── AWS S3 — everything in S3 via your backend API ────────────────────────
-    // AWS credentials stay on your server. See src/adapters/s3.ts for the
-    // required API contract and a full Node.js/Express reference server.
-    else if (provider === 's3') {
+    // ── AWS — everything in S3 via Cognito Identity Pool (no backend needed) ──
+    // The browser gets temporary, rotating credentials from Cognito.
+    // No long-lived AWS keys ever touch the browser.
+    // See src/adapters/aws.ts for full AWS setup instructions.
+    else if (provider === 'aws') {
       initFeedbackPlugin({
         backend: {
-          provider: 's3',
-          apiUrl:   import.meta.env.VITE_S3_API_URL,    // e.g. http://localhost:3001/ufp
-          headers:  { Authorization: `Bearer ${import.meta.env.VITE_S3_API_TOKEN ?? ''}` },
-          pollInterval: 5000,
+          provider:       'aws',
+          region:         import.meta.env.VITE_AWS_REGION,
+          bucket:         import.meta.env.VITE_AWS_BUCKET,
+          identityPoolId: import.meta.env.VITE_AWS_IDENTITY_POOL_ID,
+          pollInterval:   5000,
         },
         projectKey: import.meta.env.VITE_PROJECT_KEY ?? 'demo-v1',
         position: 'bottom-right',
