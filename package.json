@@ -46,7 +46,7 @@
     "@aws-sdk/credential-provider-cognito-identity": "^3.972.48",
     "@supabase/supabase-js": "^2.108.2",
     "firebase": "^10.12.0",
-    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.2.1",
     "typescript": "^5.4.5",
     "vite": "^5.2.11",
     "vite-plugin-dts": "^3.9.1"

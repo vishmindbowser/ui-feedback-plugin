@@ -7,13 +7,13 @@ export async function capturePageScreenshot(): Promise<string> {
   }
 }
 
-async function loadHtml2Canvas(): Promise<typeof import('html2canvas').default> {
-  const mod = await import('html2canvas')
+async function loadHtml2Canvas(): Promise<typeof import('html2canvas-pro').default> {
+  const mod = await import('html2canvas-pro')
   return mod.default
 }
 
 async function captureWithHtml2Canvas(
-  html2canvas: typeof import('html2canvas').default
+  html2canvas: typeof import('html2canvas-pro').default
 ): Promise<string> {
   const scrollX = window.scrollX
   const scrollY = window.scrollY
