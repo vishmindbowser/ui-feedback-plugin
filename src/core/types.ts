@@ -110,7 +110,11 @@ export interface AWSProviderConfig {
   pollInterval?: number
 }
 
-export type BackendConfig = FirebaseProviderConfig | SupabaseProviderConfig | AWSProviderConfig
+export interface LocalProviderConfig {
+  provider: 'local'
+}
+
+export type BackendConfig = FirebaseProviderConfig | SupabaseProviderConfig | AWSProviderConfig | LocalProviderConfig
 
 export interface PluginConfig {
   /**
@@ -118,6 +122,7 @@ export interface PluginConfig {
    * - `firebase`  — Firestore + Firebase Storage
    * - `supabase`  — Postgres + Supabase Storage
    * - `aws`       — Everything in AWS S3 via Cognito Identity Pool (no backend needed)
+   * - `local`     — In-memory / sessionStorage local storage
    */
   backend: BackendConfig
   /** Namespace comments by project (default: 'default'). */

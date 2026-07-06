@@ -2,7 +2,8 @@ export async function capturePageScreenshot(): Promise<string> {
   try {
     const html2canvas = await loadHtml2Canvas()
     return await captureWithHtml2Canvas(html2canvas)
-  } catch {
+  } catch (err) {
+    console.error('[ui-feedback-plugin] capturePageScreenshot failed:', err)
     return captureViewportFallback()
   }
 }
@@ -23,7 +24,7 @@ async function captureWithHtml2Canvas(
 
   try {
     const canvas = await html2canvas(document.body, {
-      allowTaint: true,
+      allowTaint: false,
       useCORS: true,
       logging: false,
       scale: Math.min(window.devicePixelRatio, 2),

@@ -39,6 +39,12 @@ async function createAdapters(config: PluginConfig): Promise<{
     return { db: adapter, screenshot: adapter }
   }
 
+  if (backend.provider === 'local') {
+    const { LocalAdapter } = await import('./adapters/local')
+    const adapter = new LocalAdapter()
+    return { db: adapter, screenshot: adapter }
+  }
+
   throw new Error('[ui-feedback-plugin] Unknown backend provider')
 }
 
