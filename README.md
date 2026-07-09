@@ -182,6 +182,12 @@ Everything — comments, replies, and screenshots — is stored directly in S3 a
 
 The browser obtains **temporary, rotating credentials** from a Cognito Identity Pool. No long-lived AWS keys ever touch the browser. The IAM role follows the least-privilege principle (file-type restrictions, size limits, no delete permission).
 
+The AWS SDK is not bundled with the plugin — install it alongside:
+
+```bash
+npm install @aws-sdk/client-s3 @aws-sdk/credential-provider-cognito-identity
+```
+
 ### Quick start
 
 ```js
@@ -411,6 +417,8 @@ No build step needed — load directly from a CDN:
 ```
 
 Replace the `backend` block with any of the three provider configs shown above.
+
+> The AWS backend is not usable this way — the AWS SDK is externalized from the bundle and needs a bundler (Vite, webpack, etc.) to resolve it. Firebase and Supabase remain fully usable via CDN as shown above.
 
 ---
 

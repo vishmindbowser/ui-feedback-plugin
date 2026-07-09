@@ -14,7 +14,7 @@ export default defineConfig({
       formats: ['es', 'umd'],
     },
     rollupOptions: {
-      external: [],
+      external: [/^@aws-sdk\//, /^@smithy\//],
     },
     sourcemap: true,
     minify: 'esbuild',

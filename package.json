@@ -1,6 +1,6 @@
 {
   "name": "@mindbowser_inc/ui-feedback-plugin",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A floating widget for collecting annotated UI feedback on web prototypes — Figma-style comments, screenshots, reply threads, Firebase/Supabase/AWS support",
   "main": "dist/ui-feedback-plugin.umd.js",
   "module": "dist/ui-feedback-plugin.es.js",
@@ -50,5 +50,17 @@
     "typescript": "^5.4.5",
     "vite": "^5.2.11",
     "vite-plugin-dts": "^3.9.1"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/credential-provider-cognito-identity": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/credential-provider-cognito-identity": {
+      "optional": true
+    }
   }
 }
