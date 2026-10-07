@@ -8,6 +8,44 @@ export interface AnnotationResult {
   anchorY: number
 }
 
+// Where a stroke is pinned: normal page content, or a fixed element near the top/bottom of the viewport.
+type Anchor = 'top' | 'bottom' | null
+
+// The screenshot is a full-page render taken at scroll (0,0) with the window sized to the whole page.
+// So a fixed element near the top appears at its viewport position, and one pinned to the bottom
+// appears at the bottom of the page. Strokes made on such elements are drawn in viewport
+// coordinates and converted to screenshot coordinates on submit.
+function detectFixedAnchor(clientX: number, clientY: number, host: Element): Anchor {
+  if (window.scrollY === 0) return null
+  const vw = window.innerWidth, vh = window.innerHeight
+  const hit = document.elementsFromPoint(clientX, clientY).find((el) => el !== host)
+  for (let el: Element | null = hit ?? null; el && el !== document.documentElement; el = el.parentElement) {
+    const cs = getComputedStyle(el)
+    if (cs.position !== 'fixed' && cs.position !== 'sticky') continue
+    const r = el.getBoundingClientRect()
+    // Full-screen fixed wrappers (backgrounds, app shells) are not "a fixed element" for this purpose.
+    if (r.width >= vw * 0.9 && r.height >= vh * 0.9) continue
+    if (cs.position === 'sticky') {
+      // Only a sticky element that is currently stuck near the top behaves like a fixed header.
+      if (r.top < vh * 0.25) return 'top'
+      continue
+    }
+    // Computed top/bottom are resolved to pixels, so decide by which viewport edge the element sits closer to.
+    return vh - r.bottom < r.top ? 'bottom' : 'top'
+  }
+  return null
+}
+
+function translateShapeY(shape: AnnotationShape, dy: number): AnnotationShape {
+  if (!dy) return shape
+  switch (shape.type) {
+    case 'pen': return { ...shape, points: shape.points.map((p) => ({ x: p.x, y: p.y + dy })) }
+    case 'rect': return { ...shape, y: shape.y + dy }
+    case 'circle': return { ...shape, cy: shape.cy + dy }
+    case 'arrow': return { ...shape, y1: shape.y1 + dy, y2: shape.y2 + dy }
+  }
+}
+
 export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationResult | null> {
   return new Promise((resolve) => {
     let currentTool: DrawingTool = 'pen'
@@ -20,6 +58,10 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     let commentPopup: HTMLElement | null = null
     let frozen = false
     let suppressClicksUntil = 0
+    const anchors: Anchor[] = []
+    let currentAnchor: Anchor = null
+    // Offset from viewport to stroke coordinates: fixed-element strokes are kept in viewport coordinates.
+    const scrollOffset = () => (currentAnchor ? { x: 0, y: 0 } : { x: window.scrollX, y: window.scrollY })
 
     // Overlay — captures pointer events for drawing
     const overlay = document.createElement('div')
@@ -43,6 +85,9 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     // wherever the page is scrolled (and stay anchored to the page if the user scrolls mid-draw).
     const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g')
     svg.appendChild(layer)
+    // Strokes on fixed elements live here, not shifted by scroll
+    const fixedLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    svg.appendChild(fixedLayer)
     const syncLayer = () => layer.setAttribute('transform', `translate(${-window.scrollX} ${-window.scrollY})`)
     syncLayer()
     window.addEventListener('scroll', syncLayer, { passive: true })
@@ -58,21 +103,24 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
 
     function redraw() {
       layer.innerHTML = ''
-      shapes.forEach((s) => layer.appendChild(renderShapeToSVG(s)))
+      fixedLayer.innerHTML = ''
+      shapes.forEach((s, i) => (anchors[i] ? fixedLayer : layer).appendChild(renderShapeToSVG(s)))
     }
 
     function getAnchor() {
       let sumX = 0, sumY = 0, count = 0
-      shapes.forEach((s) => {
+      // Sum in viewport coordinates: fixed-element strokes are already there, others are page coordinates.
+      shapes.forEach((s, i) => {
+        const ox = anchors[i] ? 0 : window.scrollX, oy = anchors[i] ? 0 : window.scrollY
         if (s.type === 'pen' && s.points.length) {
-          const p = s.points[s.points.length - 1]; sumX += p.x; sumY += p.y; count++
-        } else if (s.type === 'rect') { sumX += s.x + s.width; sumY += s.y + s.height; count++ }
-        else if (s.type === 'circle') { sumX += s.cx; sumY += s.cy; count++ }
-        else if (s.type === 'arrow') { sumX += s.x2; sumY += s.y2; count++ }
+          const p = s.points[s.points.length - 1]; sumX += p.x - ox; sumY += p.y - oy; count++
+        } else if (s.type === 'rect') { sumX += s.x + s.width - ox; sumY += s.y + s.height - oy; count++ }
+        else if (s.type === 'circle') { sumX += s.cx - ox; sumY += s.cy - oy; count++ }
+        else if (s.type === 'arrow') { sumX += s.x2 - ox; sumY += s.y2 - oy; count++ }
       })
       return {
-        anchorX: count > 0 ? sumX / count - window.scrollX : window.innerWidth / 2,
-        anchorY: count > 0 ? sumY / count - window.scrollY : window.innerHeight / 2,
+        anchorX: count > 0 ? sumX / count : window.innerWidth / 2,
+        anchorY: count > 0 ? sumY / count : window.innerHeight / 2,
       }
     }
 
@@ -139,7 +187,10 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         if (!text) return
         const anchor = getAnchor()
         cleanup()
-        resolve({ shapes: [...shapes], text, ...anchor })
+        // Convert fixed-element strokes (viewport coordinates) to full-page screenshot coordinates.
+        const bottomShift = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+        const pageShapes = shapes.map((sh, i) => translateShapeY(sh, anchors[i] === 'bottom' ? bottomShift : 0))
+        resolve({ shapes: pageShapes, text, ...anchor })
       })
 
       cancelBtn.addEventListener('click', () => {
@@ -164,6 +215,7 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
           frozen = false
         }
         shapes.pop()
+        anchors.pop()
         redraw()
       }
     )
@@ -209,15 +261,16 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
       // Capture to the overlay (not e.target, which is the shadow host when seen from window)
       try { overlay.setPointerCapture(e.pointerId) } catch { /* ignore */ }
       drawing = true
-      startX = e.clientX + window.scrollX
-      startY = e.clientY + window.scrollY
+      currentAnchor = detectFixedAnchor(e.clientX, e.clientY, shadow.host)
+      startX = e.clientX + scrollOffset().x
+      startY = e.clientY + scrollOffset().y
       if (currentTool === 'pen') currentStroke = [{ x: startX, y: startY }]
     }
 
     function onPointerMove(e: PointerEvent) {
       if (!drawing) return
-      const cx = e.clientX + window.scrollX
-      const cy = e.clientY + window.scrollY
+      const cx = e.clientX + scrollOffset().x
+      const cy = e.clientY + scrollOffset().y
       if (previewEl) previewEl.remove()
 
       if (currentTool === 'pen') {
@@ -235,7 +288,7 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         previewEl = renderShapeToSVG(a)
       }
 
-      if (previewEl) layer.appendChild(previewEl)
+      if (previewEl) (currentAnchor ? fixedLayer : layer).appendChild(previewEl)
     }
 
     function onPointerUp(e: PointerEvent) {
@@ -244,8 +297,8 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
       drawing = false
       if (previewEl) { previewEl.remove(); previewEl = null }
 
-      const cx = e.clientX + window.scrollX
-      const cy = e.clientY + window.scrollY
+      const cx = e.clientX + scrollOffset().x
+      const cy = e.clientY + scrollOffset().y
       let committed = false
 
       if (currentTool === 'pen' && currentStroke.length > 1) {
@@ -273,6 +326,7 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
       }
 
       if (committed) {
+        anchors.push(currentAnchor)
         redraw()
         onShapeCommitted()
       }
