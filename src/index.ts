@@ -11,7 +11,7 @@ import { createFloatingTrigger } from './ui/FloatingTrigger'
 import { showNameModal } from './ui/NameModal'
 import { showAnnotationOverlay } from './ui/AnnotationOverlay'
 import { createCommentsPanel } from './ui/CommentsPanel'
-import { capturePageScreenshot } from './screenshot/capture'
+import { capturePageScreenshot, drawAnnotationsOnScreenshot } from './screenshot/capture'
 
 const TAG = 'ui-feedback-plugin'
 
@@ -159,6 +159,7 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
       } finally {
         this.style.visibility = ''
       }
+      screenshotDataUrl = await drawAnnotationsOnScreenshot(screenshotDataUrl, annotation)
 
       const placeholder: Omit<FeedbackComment, 'id'> = {
         pageUrl,

@@ -8,6 +8,44 @@ export interface AnnotationResult {
   anchorY: number
 }
 
+// Where a stroke is pinned: normal page content, or a fixed element near the top/bottom of the viewport.
+type Anchor = 'top' | 'bottom' | null
+
+// The screenshot is a full-page render taken at scroll (0,0) with the window sized to the whole page.
+// So a fixed element near the top appears at its viewport position, and one pinned to the bottom
+// appears at the bottom of the page. Strokes made on such elements are drawn in viewport
+// coordinates and converted to screenshot coordinates on submit.
+function detectFixedAnchor(clientX: number, clientY: number, host: Element): Anchor {
+  if (window.scrollY === 0) return null
+  const vw = window.innerWidth, vh = window.innerHeight
+  const hit = document.elementsFromPoint(clientX, clientY).find((el) => el !== host)
+  for (let el: Element | null = hit ?? null; el && el !== document.documentElement; el = el.parentElement) {
+    const cs = getComputedStyle(el)
+    if (cs.position !== 'fixed' && cs.position !== 'sticky') continue
+    const r = el.getBoundingClientRect()
+    // Full-screen fixed wrappers (backgrounds, app shells) are not "a fixed element" for this purpose.
+    if (r.width >= vw * 0.9 && r.height >= vh * 0.9) continue
+    if (cs.position === 'sticky') {
+      // Only a sticky element that is currently stuck near the top behaves like a fixed header.
+      if (r.top < vh * 0.25) return 'top'
+      continue
+    }
+    // Computed top/bottom are resolved to pixels, so decide by which viewport edge the element sits closer to.
+    return vh - r.bottom < r.top ? 'bottom' : 'top'
+  }
+  return null
+}
+
+function translateShapeY(shape: AnnotationShape, dy: number): AnnotationShape {
+  if (!dy) return shape
+  switch (shape.type) {
+    case 'pen': return { ...shape, points: shape.points.map((p) => ({ x: p.x, y: p.y + dy })) }
+    case 'rect': return { ...shape, y: shape.y + dy }
+    case 'circle': return { ...shape, cy: shape.cy + dy }
+    case 'arrow': return { ...shape, y1: shape.y1 + dy, y2: shape.y2 + dy }
+  }
+}
+
 export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationResult | null> {
   return new Promise((resolve) => {
     let currentTool: DrawingTool = 'pen'
@@ -18,10 +56,16 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     let currentStroke: Point[] = []
     let previewEl: SVGElement | null = null
     let commentPopup: HTMLElement | null = null
+    let frozen = false
+    let suppressClicksUntil = 0
+    const anchors: Anchor[] = []
+    let currentAnchor: Anchor = null
+    // Offset from viewport to stroke coordinates: fixed-element strokes are kept in viewport coordinates.
+    const scrollOffset = () => (currentAnchor ? { x: 0, y: 0 } : { x: window.scrollX, y: window.scrollY })
 
     // Overlay — captures pointer events for drawing
     const overlay = document.createElement('div')
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(99,102,241,0.04);'
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(99,102,241,0.04);touch-action:none;user-select:none;-webkit-user-select:none;'
 
     // SVG lives inside the overlay so shapes stay visible as long as overlay is alive
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -36,36 +80,54 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     `
     overlay.appendChild(svg)
 
+    // Shapes are stored in page coordinates, but the overlay is position:fixed. Every shape lives
+    // in this layer, which is shifted by the scroll offset so strokes appear under the cursor
+    // wherever the page is scrolled (and stay anchored to the page if the user scrolls mid-draw).
+    const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    svg.appendChild(layer)
+    // Strokes on fixed elements live here, not shifted by scroll
+    const fixedLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    svg.appendChild(fixedLayer)
+    const syncLayer = () => layer.setAttribute('transform', `translate(${-window.scrollX} ${-window.scrollY})`)
+    syncLayer()
+    window.addEventListener('scroll', syncLayer, { passive: true })
+
     function cleanup() {
+      window.removeEventListener('scroll', syncLayer)
+      for (const t of POINTER_EVENTS) window.removeEventListener(t, onWindowEvent, true)
+      for (const t of BLOCKED_EVENTS) window.removeEventListener(t, onBlockedEvent, true)
       overlay.remove()
       toolbar.remove()
       commentPopup?.remove()
     }
 
     function redraw() {
-      const defs = svg.querySelector('defs')!
-      svg.innerHTML = ''
-      svg.appendChild(defs)
-      shapes.forEach((s) => svg.appendChild(renderShapeToSVG(s)))
+      layer.innerHTML = ''
+      fixedLayer.innerHTML = ''
+      shapes.forEach((s, i) => (anchors[i] ? fixedLayer : layer).appendChild(renderShapeToSVG(s)))
     }
 
     function getAnchor() {
       let sumX = 0, sumY = 0, count = 0
-      shapes.forEach((s) => {
+      // Sum in viewport coordinates: fixed-element strokes are already there, others are page coordinates.
+      shapes.forEach((s, i) => {
+        const ox = anchors[i] ? 0 : window.scrollX, oy = anchors[i] ? 0 : window.scrollY
         if (s.type === 'pen' && s.points.length) {
-          const p = s.points[s.points.length - 1]; sumX += p.x; sumY += p.y; count++
-        } else if (s.type === 'rect') { sumX += s.x + s.width; sumY += s.y + s.height; count++ }
-        else if (s.type === 'circle') { sumX += s.cx; sumY += s.cy; count++ }
-        else if (s.type === 'arrow') { sumX += s.x2; sumY += s.y2; count++ }
+          const p = s.points[s.points.length - 1]; sumX += p.x - ox; sumY += p.y - oy; count++
+        } else if (s.type === 'rect') { sumX += s.x + s.width - ox; sumY += s.y + s.height - oy; count++ }
+        else if (s.type === 'circle') { sumX += s.cx - ox; sumY += s.cy - oy; count++ }
+        else if (s.type === 'arrow') { sumX += s.x2 - ox; sumY += s.y2 - oy; count++ }
       })
       return {
-        anchorX: count > 0 ? sumX / count - window.scrollX : window.innerWidth / 2,
-        anchorY: count > 0 ? sumY / count - window.scrollY : window.innerHeight / 2,
+        anchorX: count > 0 ? sumX / count : window.innerWidth / 2,
+        anchorY: count > 0 ? sumY / count : window.innerHeight / 2,
       }
     }
 
     // After a shape is committed: freeze drawing, auto-show comment popup
     function onShapeCommitted() {
+      frozen = true
+      drawing = false
       overlay.style.pointerEvents = 'none'
       toolbar.style.pointerEvents = 'none'
       showCommentPopup()
@@ -125,7 +187,10 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         if (!text) return
         const anchor = getAnchor()
         cleanup()
-        resolve({ shapes: [...shapes], text, ...anchor })
+        // Convert fixed-element strokes (viewport coordinates) to full-page screenshot coordinates.
+        const bottomShift = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+        const pageShapes = shapes.map((sh, i) => translateShapeY(sh, anchors[i] === 'bottom' ? bottomShift : 0))
+        resolve({ shapes: pageShapes, text, ...anchor })
       })
 
       cancelBtn.addEventListener('click', () => {
@@ -147,8 +212,10 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
           commentPopup = null
           overlay.style.pointerEvents = 'auto'
           toolbar.style.pointerEvents = 'auto'
+          frozen = false
         }
         shapes.pop()
+        anchors.pop()
         redraw()
       }
     )
@@ -157,19 +224,53 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
 
     // ── Drawing event listeners ────────────────────────────────────────────
 
-    overlay.addEventListener('pointerdown', (e: PointerEvent) => {
-      if (e.button !== 0) return
-      overlay.setPointerCapture(e.pointerId)
-      drawing = true
-      startX = e.clientX + window.scrollX
-      startY = e.clientY + window.scrollY
-      if (currentTool === 'pen') currentStroke = [{ x: startX, y: startY }]
-    })
+    // Drawing is driven by capture-phase listeners on window rather than by the overlay's own
+    // hit-testing. Host pages can have elements that sit above the overlay (top-layer dialogs,
+    // animated cards, elements with their own pointer handling); capturing on window gets the
+    // event first no matter what is under the cursor, and we stop it reaching the page.
+    const POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const
+    const BLOCKED_EVENTS = ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'touchstart', 'touchmove', 'contextmenu', 'dragstart', 'selectstart'] as const
 
-    overlay.addEventListener('pointermove', (e: PointerEvent) => {
+    // True when the event belongs to the plugin's own UI (toolbar, comment popup, trigger, panel).
+    function isOwnUi(e: Event): boolean {
+      const path = e.composedPath()
+      return path.includes(shadow.host) && !path.includes(overlay)
+    }
+
+    function onBlockedEvent(e: Event) {
+      if (isOwnUi(e)) return
+      // The click that follows a finished gesture would otherwise activate whatever is under the cursor.
+      if (frozen && performance.now() > suppressClicksUntil) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    function onWindowEvent(e: Event) {
+      if (frozen || isOwnUi(e)) return
+      e.stopPropagation()
+      const pe = e as PointerEvent
+      if (e.type === 'pointerdown') onPointerDown(pe)
+      else if (e.type === 'pointermove') onPointerMove(pe)
+      else if (e.type === 'pointerup') onPointerUp(pe)
+      else if (e.type === 'pointercancel') { drawing = false; if (previewEl) { previewEl.remove(); previewEl = null } }
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      if (e.button !== 0) return
+      e.preventDefault()
+      // Capture to the overlay (not e.target, which is the shadow host when seen from window)
+      try { overlay.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+      drawing = true
+      currentAnchor = detectFixedAnchor(e.clientX, e.clientY, shadow.host)
+      startX = e.clientX + scrollOffset().x
+      startY = e.clientY + scrollOffset().y
+      if (currentTool === 'pen') currentStroke = [{ x: startX, y: startY }]
+    }
+
+    function onPointerMove(e: PointerEvent) {
       if (!drawing) return
-      const cx = e.clientX + window.scrollX
-      const cy = e.clientY + window.scrollY
+      const cx = e.clientX + scrollOffset().x
+      const cy = e.clientY + scrollOffset().y
       if (previewEl) previewEl.remove()
 
       if (currentTool === 'pen') {
@@ -187,16 +288,17 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         previewEl = renderShapeToSVG(a)
       }
 
-      if (previewEl) svg.appendChild(previewEl)
-    })
+      if (previewEl) (currentAnchor ? fixedLayer : layer).appendChild(previewEl)
+    }
 
-    overlay.addEventListener('pointerup', (e: PointerEvent) => {
+    function onPointerUp(e: PointerEvent) {
       if (!drawing) return
+      suppressClicksUntil = performance.now() + 400
       drawing = false
       if (previewEl) { previewEl.remove(); previewEl = null }
 
-      const cx = e.clientX + window.scrollX
-      const cy = e.clientY + window.scrollY
+      const cx = e.clientX + scrollOffset().x
+      const cy = e.clientY + scrollOffset().y
       let committed = false
 
       if (currentTool === 'pen' && currentStroke.length > 1) {
@@ -224,10 +326,14 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
       }
 
       if (committed) {
+        anchors.push(currentAnchor)
         redraw()
         onShapeCommitted()
       }
-    })
+    }
+
+    for (const t of POINTER_EVENTS) window.addEventListener(t, onWindowEvent, { capture: true, passive: false })
+    for (const t of BLOCKED_EVENTS) window.addEventListener(t, onBlockedEvent, { capture: true, passive: false })
   })
 }
 
