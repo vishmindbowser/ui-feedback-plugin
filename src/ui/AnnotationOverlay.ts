@@ -38,7 +38,17 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     `
     overlay.appendChild(svg)
 
+    // Shapes are stored in page coordinates, but the overlay is position:fixed. Every shape lives
+    // in this layer, which is shifted by the scroll offset so strokes appear under the cursor
+    // wherever the page is scrolled (and stay anchored to the page if the user scrolls mid-draw).
+    const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    svg.appendChild(layer)
+    const syncLayer = () => layer.setAttribute('transform', `translate(${-window.scrollX} ${-window.scrollY})`)
+    syncLayer()
+    window.addEventListener('scroll', syncLayer, { passive: true })
+
     function cleanup() {
+      window.removeEventListener('scroll', syncLayer)
       for (const t of POINTER_EVENTS) window.removeEventListener(t, onWindowEvent, true)
       for (const t of BLOCKED_EVENTS) window.removeEventListener(t, onBlockedEvent, true)
       overlay.remove()
@@ -47,10 +57,8 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     }
 
     function redraw() {
-      const defs = svg.querySelector('defs')!
-      svg.innerHTML = ''
-      svg.appendChild(defs)
-      shapes.forEach((s) => svg.appendChild(renderShapeToSVG(s)))
+      layer.innerHTML = ''
+      shapes.forEach((s) => layer.appendChild(renderShapeToSVG(s)))
     }
 
     function getAnchor() {
@@ -198,7 +206,8 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     function onPointerDown(e: PointerEvent) {
       if (e.button !== 0) return
       e.preventDefault()
-      try { (e.target as Element).setPointerCapture?.(e.pointerId) } catch { /* ignore */ }
+      // Capture to the overlay (not e.target, which is the shadow host when seen from window)
+      try { overlay.setPointerCapture(e.pointerId) } catch { /* ignore */ }
       drawing = true
       startX = e.clientX + window.scrollX
       startY = e.clientY + window.scrollY
@@ -226,7 +235,7 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         previewEl = renderShapeToSVG(a)
       }
 
-      if (previewEl) svg.appendChild(previewEl)
+      if (previewEl) layer.appendChild(previewEl)
     }
 
     function onPointerUp(e: PointerEvent) {
