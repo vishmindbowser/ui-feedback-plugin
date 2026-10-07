@@ -1,5 +1,5 @@
 // AWS Cognito Identity Pool adapter — browser talks directly to S3, no backend required.
-// Requires @aws-sdk/client-s3 and @aws-sdk/credential-providers (both in devDependencies).
+// Requires @aws-sdk/client-s3.
 //
 // ── AWS SETUP ────────────────────────────────────────────────────────────────────
 //
@@ -91,18 +91,45 @@ export class AWSAdapter implements DatabaseAdapter, ScreenshotAdapter {
     this.cfg = config
   }
 
+  // Minimal Cognito Identity Pool credential provider using plain fetch.
+  // Avoids @aws-sdk/credential-provider-cognito-identity, whose named export fails to
+  // resolve ("e is not a function") under some consumer bundlers.
+  private async cognito(target: string, body: object): Promise<any> {
+    const res = await fetch(`https://cognito-identity.${this.cfg.region}.amazonaws.com/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': `AWSCognitoIdentityService.${target}`,
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`Cognito ${target} failed: ${res.status} ${await res.text()}`)
+    return res.json()
+  }
+
+  private async credentials() {
+    const storageKey = `ufp:identity:${this.cfg.identityPoolId}`
+    let identityId: string | null = null
+    try { identityId = localStorage.getItem(storageKey) } catch { /* ignore */ }
+    if (!identityId) {
+      identityId = (await this.cognito('GetId', { IdentityPoolId: this.cfg.identityPoolId })).IdentityId as string
+      try { localStorage.setItem(storageKey, identityId) } catch { /* ignore */ }
+    }
+    const { Credentials: c } = await this.cognito('GetCredentialsForIdentity', { IdentityId: identityId })
+    return {
+      accessKeyId: c.AccessKeyId as string,
+      secretAccessKey: c.SecretKey as string,
+      sessionToken: c.SessionToken as string,
+      expiration: new Date(c.Expiration * 1000),
+    }
+  }
+
   private async s3(): Promise<S3ClientType> {
     if (this._s3) return this._s3
-    const [{ S3Client }, { fromCognitoIdentityPool }] = await Promise.all([
-      import('@aws-sdk/client-s3'),
-      import('@aws-sdk/credential-provider-cognito-identity'),
-    ])
+    const { S3Client } = await import('@aws-sdk/client-s3')
     this._s3 = new S3Client({
       region: this.cfg.region,
-      credentials: fromCognitoIdentityPool({
-        identityPoolId: this.cfg.identityPoolId,
-        clientConfig: { region: this.cfg.region },
-      }),
+      credentials: () => this.credentials(),
     })
     return this._s3
   }
