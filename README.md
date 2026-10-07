@@ -185,7 +185,7 @@ The browser obtains **temporary, rotating credentials** from a Cognito Identity 
 The AWS SDK is not bundled with the plugin — install it alongside:
 
 ```bash
-npm install @aws-sdk/client-s3 @aws-sdk/credential-provider-cognito-identity
+npm install @aws-sdk/client-s3
 ```
 
 ### Quick start
