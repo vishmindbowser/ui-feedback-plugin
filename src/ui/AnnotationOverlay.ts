@@ -18,10 +18,12 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     let currentStroke: Point[] = []
     let previewEl: SVGElement | null = null
     let commentPopup: HTMLElement | null = null
+    let frozen = false
+    let suppressClicksUntil = 0
 
     // Overlay — captures pointer events for drawing
     const overlay = document.createElement('div')
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(99,102,241,0.04);'
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(99,102,241,0.04);touch-action:none;user-select:none;-webkit-user-select:none;'
 
     // SVG lives inside the overlay so shapes stay visible as long as overlay is alive
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -37,6 +39,8 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
     overlay.appendChild(svg)
 
     function cleanup() {
+      for (const t of POINTER_EVENTS) window.removeEventListener(t, onWindowEvent, true)
+      for (const t of BLOCKED_EVENTS) window.removeEventListener(t, onBlockedEvent, true)
       overlay.remove()
       toolbar.remove()
       commentPopup?.remove()
@@ -66,6 +70,8 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
 
     // After a shape is committed: freeze drawing, auto-show comment popup
     function onShapeCommitted() {
+      frozen = true
+      drawing = false
       overlay.style.pointerEvents = 'none'
       toolbar.style.pointerEvents = 'none'
       showCommentPopup()
@@ -147,6 +153,7 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
           commentPopup = null
           overlay.style.pointerEvents = 'auto'
           toolbar.style.pointerEvents = 'auto'
+          frozen = false
         }
         shapes.pop()
         redraw()
@@ -157,16 +164,48 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
 
     // ── Drawing event listeners ────────────────────────────────────────────
 
-    overlay.addEventListener('pointerdown', (e: PointerEvent) => {
+    // Drawing is driven by capture-phase listeners on window rather than by the overlay's own
+    // hit-testing. Host pages can have elements that sit above the overlay (top-layer dialogs,
+    // animated cards, elements with their own pointer handling); capturing on window gets the
+    // event first no matter what is under the cursor, and we stop it reaching the page.
+    const POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const
+    const BLOCKED_EVENTS = ['mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'touchstart', 'touchmove', 'contextmenu', 'dragstart', 'selectstart'] as const
+
+    // True when the event belongs to the plugin's own UI (toolbar, comment popup, trigger, panel).
+    function isOwnUi(e: Event): boolean {
+      const path = e.composedPath()
+      return path.includes(shadow.host) && !path.includes(overlay)
+    }
+
+    function onBlockedEvent(e: Event) {
+      if (isOwnUi(e)) return
+      // The click that follows a finished gesture would otherwise activate whatever is under the cursor.
+      if (frozen && performance.now() > suppressClicksUntil) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    function onWindowEvent(e: Event) {
+      if (frozen || isOwnUi(e)) return
+      e.stopPropagation()
+      const pe = e as PointerEvent
+      if (e.type === 'pointerdown') onPointerDown(pe)
+      else if (e.type === 'pointermove') onPointerMove(pe)
+      else if (e.type === 'pointerup') onPointerUp(pe)
+      else if (e.type === 'pointercancel') { drawing = false; if (previewEl) { previewEl.remove(); previewEl = null } }
+    }
+
+    function onPointerDown(e: PointerEvent) {
       if (e.button !== 0) return
-      overlay.setPointerCapture(e.pointerId)
+      e.preventDefault()
+      try { (e.target as Element).setPointerCapture?.(e.pointerId) } catch { /* ignore */ }
       drawing = true
       startX = e.clientX + window.scrollX
       startY = e.clientY + window.scrollY
       if (currentTool === 'pen') currentStroke = [{ x: startX, y: startY }]
-    })
+    }
 
-    overlay.addEventListener('pointermove', (e: PointerEvent) => {
+    function onPointerMove(e: PointerEvent) {
       if (!drawing) return
       const cx = e.clientX + window.scrollX
       const cy = e.clientY + window.scrollY
@@ -188,10 +227,11 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
       }
 
       if (previewEl) svg.appendChild(previewEl)
-    })
+    }
 
-    overlay.addEventListener('pointerup', (e: PointerEvent) => {
+    function onPointerUp(e: PointerEvent) {
       if (!drawing) return
+      suppressClicksUntil = performance.now() + 400
       drawing = false
       if (previewEl) { previewEl.remove(); previewEl = null }
 
@@ -227,7 +267,10 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         redraw()
         onShapeCommitted()
       }
-    })
+    }
+
+    for (const t of POINTER_EVENTS) window.addEventListener(t, onWindowEvent, { capture: true, passive: false })
+    for (const t of BLOCKED_EVENTS) window.addEventListener(t, onBlockedEvent, { capture: true, passive: false })
   })
 }
 
