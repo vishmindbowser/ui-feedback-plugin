@@ -11,12 +11,11 @@ export interface AnnotationResult {
 // Where a stroke is pinned: normal page content, or a fixed element near the top/bottom of the viewport.
 type Anchor = 'top' | 'bottom' | null
 
-// The screenshot is a full-page render taken at scroll (0,0) with the window sized to the whole page.
-// So a fixed element near the top appears at its viewport position, and one pinned to the bottom
-// appears at the bottom of the page. Strokes made on such elements are drawn in viewport
-// coordinates and converted to screenshot coordinates on submit.
+// The screenshot covers only the visible viewport, so a stroke on a fixed/sticky element is already
+// in screenshot coordinates (viewport coordinates), while strokes on page content are stored in page
+// coordinates and shifted by the scroll offset on submit.
 function detectFixedAnchor(clientX: number, clientY: number, host: Element): Anchor {
-  if (window.scrollY === 0) return null
+  if (window.scrollX === 0 && window.scrollY === 0) return null
   const vw = window.innerWidth, vh = window.innerHeight
   const hit = document.elementsFromPoint(clientX, clientY).find((el) => el !== host)
   for (let el: Element | null = hit ?? null; el && el !== document.documentElement; el = el.parentElement) {
@@ -36,13 +35,13 @@ function detectFixedAnchor(clientX: number, clientY: number, host: Element): Anc
   return null
 }
 
-function translateShapeY(shape: AnnotationShape, dy: number): AnnotationShape {
-  if (!dy) return shape
+function translateShape(shape: AnnotationShape, dx: number, dy: number): AnnotationShape {
+  if (!dx && !dy) return shape
   switch (shape.type) {
-    case 'pen': return { ...shape, points: shape.points.map((p) => ({ x: p.x, y: p.y + dy })) }
-    case 'rect': return { ...shape, y: shape.y + dy }
-    case 'circle': return { ...shape, cy: shape.cy + dy }
-    case 'arrow': return { ...shape, y1: shape.y1 + dy, y2: shape.y2 + dy }
+    case 'pen': return { ...shape, points: shape.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+    case 'rect': return { ...shape, x: shape.x + dx, y: shape.y + dy }
+    case 'circle': return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy }
+    case 'arrow': return { ...shape, x1: shape.x1 + dx, y1: shape.y1 + dy, x2: shape.x2 + dx, y2: shape.y2 + dy }
   }
 }
 
@@ -187,10 +186,11 @@ export function showAnnotationOverlay(shadow: ShadowRoot): Promise<AnnotationRes
         if (!text) return
         const anchor = getAnchor()
         cleanup()
-        // Convert fixed-element strokes (viewport coordinates) to full-page screenshot coordinates.
-        const bottomShift = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
-        const pageShapes = shapes.map((sh, i) => translateShapeY(sh, anchors[i] === 'bottom' ? bottomShift : 0))
-        resolve({ shapes: pageShapes, text, ...anchor })
+        // The screenshot is the visible viewport: convert page-coordinate strokes to viewport coordinates
+        // (fixed-element strokes already are).
+        const viewportShapes = shapes.map((sh, i) =>
+          anchors[i] ? sh : translateShape(sh, -window.scrollX, -window.scrollY))
+        resolve({ shapes: viewportShapes, text, ...anchor })
       })
 
       cancelBtn.addEventListener('click', () => {
