@@ -18,33 +18,27 @@ async function loadHtml2Canvas(): Promise<typeof import('html2canvas-pro').defau
 async function captureWithHtml2Canvas(
   html2canvas: typeof import('html2canvas-pro').default
 ): Promise<string> {
-  const scrollX = window.scrollX
-  const scrollY = window.scrollY
+  // Capture only what is currently visible: the viewport at the current scroll position.
+  const width = document.documentElement.clientWidth
+  const height = window.innerHeight
 
-  // Scroll to top so full page renders from the start
-  window.scrollTo(0, 0)
-
-  try {
-    const canvas = await html2canvas(document.body, {
-      allowTaint: false,
-      useCORS: true,
-      logging: false,
-      scale: Math.min(window.devicePixelRatio, 2),
-      width: document.documentElement.scrollWidth,
-      height: document.documentElement.scrollHeight,
-      windowWidth: document.documentElement.scrollWidth,
-      windowHeight: document.documentElement.scrollHeight,
-      x: 0,
-      y: 0,
-      ignoreElements: (el) => {
-        // Skip the feedback widget itself
-        return (el as HTMLElement).tagName === 'UI-FEEDBACK-PLUGIN'
-      },
-    })
-    return canvas.toDataURL('image/png')
-  } finally {
-    window.scrollTo(scrollX, scrollY)
-  }
+  const canvas = await html2canvas(document.body, {
+    allowTaint: false,
+    useCORS: true,
+    logging: false,
+    scale: Math.min(window.devicePixelRatio, 2),
+    x: window.scrollX,
+    y: window.scrollY,
+    width,
+    height,
+    windowWidth: width,
+    windowHeight: height,
+    ignoreElements: (el) => {
+      // Skip the feedback widget itself
+      return (el as HTMLElement).tagName === 'UI-FEEDBACK-PLUGIN'
+    },
+  })
+  return canvas.toDataURL('image/png')
 }
 
 function captureViewportFallback(): string {
@@ -64,7 +58,7 @@ function captureViewportFallback(): string {
 
 /**
  * Draws the annotation shapes onto the screenshot so the stored PNG is self-contained.
- * Shapes are in full-page CSS pixels; the screenshot is scaled by (image width / pageWidth).
+ * Shape coordinates are in the screenshot's CSS-pixel space (pageWidth x pageHeight); the image is scaled by (image width / pageWidth).
  */
 export async function drawAnnotationsOnScreenshot(
   dataUrl: string,

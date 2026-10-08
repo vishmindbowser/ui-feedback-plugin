@@ -148,8 +148,9 @@ export function initFeedbackPlugin(config: PluginConfig): () => void {
       const pageUrl = normalizeUrl(window.location.href)
       const annotation: AnnotationData = {
         shapes,
-        pageWidth:  document.documentElement.scrollWidth,
-        pageHeight: document.documentElement.scrollHeight,
+        // Shapes are in viewport coordinates; the screenshot covers just the visible viewport.
+        pageWidth:  document.documentElement.clientWidth,
+        pageHeight: window.innerHeight,
       }
 
       this.style.visibility = 'hidden'
